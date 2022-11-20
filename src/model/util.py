@@ -160,13 +160,13 @@ class UtilClass():
         plt.close('all')
 
     def prepare_tensor(self, src_tensor, output_tensor):
-        road_tensor = torch.where(output_tensor > 0.85, 1, 0)
-        cell_tensor = torch.where(src_tensor > 0.85, 1, 0)
+        cell_tensor = torch.where(src_tensor > 0.75, 1, 0)
+        road_tensor = torch.where(output_tensor > 0.75, 1, 0)
         return cell_tensor, road_tensor
 
-    def get_acc(self, src_tensor, output_tensor, batch_idx, batch_size, data_type="val",
-                    cmf_flag=True, other_flag=False):
-        road_tensor, cell_tensor = self.prepare_tensor(src_tensor, output_tensor)
+    def get_acc(self, config, src_tensor, output_tensor, batch_idx, batch_size, data_type="val",
+                cmf_flag=True, other_flag=False):
+        cell_tensor, road_tensor = self.prepare_tensor(src_tensor, output_tensor)
         if (data_type == "train"):
             cell_src = self.train_src[batch_idx * batch_size:(batch_idx + 1) * batch_size]
             trg = self.train_trg[batch_idx * batch_size:(batch_idx + 1) * batch_size]
@@ -180,28 +180,36 @@ class UtilClass():
         rmf_count = 0
         precision_count = 0
         recall_count = 0
-        if(other_flag):
-            iterator=tqdm.tqdm(range(len(cell_src)))
-        else:
-            iterator=range(len(cell_src))
-        for i in iterator:
-            res_pos = self.convert_pix2coordinate(cell_src[i], cell_tensor[i], road_tensor[i])
-            if (cmf_flag):
-                cmf = self.get_cmf(res_pos, trg[i], radius=50)
-                cmf_count += cmf
-            if (other_flag):
-                res_nodes = self.get_matched_node_from_pos(cell_src[i], res_pos)
-                trg_nodes = self.get_nodes_from_trg(cell_src[i], trg[i])
-                rmf = self.get_rmf(res_nodes, trg_nodes)
-                precision = self.get_precision(res_nodes, trg_nodes)
-                recall = self.get_precision(res_nodes, trg_nodes)
-                rmf_count += rmf
-                precision_count += precision
-                recall_count += recall
+
+        external_inputs = [(cell_src[i], cell_tensor[i], road_tensor[i], trg[i], other_flag) for i in
+                           range(len(cell_src))]
+        with torch.multiprocessing.get_context("spawn").Pool(processes=config["multiprocessing"]) as pool:
+            # print("Get start evaluation!")
+            acc_lst = pool.map(self.pool_func, external_inputs)
+        for item in acc_lst:
+            cmf_count += item[0]
+            rmf_count += item[1]
+            precision_count += item[2]
+            recall_count += item[3]
         return cmf_count / len(cell_src), \
                rmf_count / len(cell_src), \
                precision_count / len(cell_src), \
                recall_count / len(cell_src),
+
+    def pool_func(self, external_input):
+        cell_src_i, cell_tensor_i, road_tensor_i, trg_i, other_flag = external_input
+        res_pos = self.convert_pix2coordinate(cell_src_i, cell_tensor_i, road_tensor_i)
+        cmf = self.get_cmf(res_pos, trg_i, radius=50)
+
+        if (other_flag):
+            res_nodes = self.get_matched_node_from_pos(cell_src_i, res_pos)
+            trg_nodes = self.get_nodes_from_trg(cell_src_i, trg_i)
+            rmf = self.get_rmf(res_nodes, trg_nodes)
+            precision = self.get_precision(res_nodes, trg_nodes)
+            recall = self.get_recall(res_nodes, trg_nodes)
+        else:
+            rmf, precision, recall = 1e-5, 1e-5, 1e-5
+        return cmf, rmf, precision, recall
 
 
 # 将图像Tensor转为路网

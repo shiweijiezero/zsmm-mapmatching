@@ -60,13 +60,14 @@ class Wrapper(pl.LightningModule):
 
         loss = self.get_loss(output_image.view(-1, 224 * 224), target_image.view(-1, 224 * 224),
                              criteria=criteria, mask=mask, reduction='mean', type=self.config["loss_type"])
-        cmf, _,_,_ = self.myutil.get_acc(src_tensor=input_image[:, 1],
-                                                       output_tensor=output_image[:, 0],
-                                                       batch_idx=batch_idx,
-                                                       batch_size=self.minibatch_size,
-                                                       data_type="train",
-                                                       cmf_flag=True,
-                                                       other_flag=False)
+        cmf, _, _, _ = self.myutil.get_acc(config=self.config,
+                                           src_tensor=input_image[:, 1],
+                                           output_tensor=output_image[:, 0],
+                                           batch_idx=batch_idx,
+                                           batch_size=self.minibatch_size,
+                                           data_type="train",
+                                           cmf_flag=True,
+                                           other_flag=False)
         self.log_dict({
             'train_loss': loss,
             'train_cmf': cmf
@@ -88,13 +89,14 @@ class Wrapper(pl.LightningModule):
         loss = self.get_loss(output_image.view(-1, 224 * 224), target_image.view(-1, 224 * 224),
                              criteria=criteria, mask=mask,
                              reduction='mean')
-        cmf, _,_,_ = self.myutil.get_acc(src_tensor=input_image[:, 1],
-                                         output_tensor=output_image[:, 0],
-                                         batch_idx=batch_idx,
-                                         batch_size=self.minibatch_size,
-                                         data_type="val",
-                                         cmf_flag=True,
-                                         other_flag=False)
+        cmf, _, _, _ = self.myutil.get_acc(config=self.config,
+                                           src_tensor=input_image[:, 1],
+                                           output_tensor=output_image[:, 0],
+                                           batch_idx=batch_idx,
+                                           batch_size=self.minibatch_size,
+                                           data_type="train",
+                                           cmf_flag=True,
+                                           other_flag=False)
         self.log_dict({
             'val_loss': loss,
             'val_cmf': cmf
@@ -145,24 +147,25 @@ class Wrapper(pl.LightningModule):
         src_lst = [i[0] for i in outputs]
         output_lst = [i[1] for i in outputs]
 
-        src_tensor = torch.cat(src_lst, dim=0)
-        output_tensor = torch.cat(output_lst, dim=0)
+        src_tensor = torch.cat(src_lst, dim=0).cpu()
+        output_tensor = torch.cat(output_lst, dim=0).cpu()
 
         if not os.path.exists("./data/save_output/"):
             os.mkdir("./data/save_output/")
         torch.save(src_tensor, f"./data/save_output/src_tensor")
         torch.save(output_tensor, f"./data/save_output/output_tensor")
 
-        cmf, rmf, precision, recall = self.myutil.get_acc(src_tensor=src_tensor,
-                                         output_tensor=output_tensor,
-                                         batch_idx=0,
-                                         batch_size=src_tensor.shape[0],
-                                         data_type="val",
-                                         cmf_flag=True,
-                                         other_flag=True)
+        cmf, rmf, precision, recall = self.myutil.get_acc(config=self.config,
+                                                          src_tensor=src_tensor,
+                                                          output_tensor=output_tensor,
+                                                          batch_idx=0,
+                                                          batch_size=
+                                                          # 30,
+                                                          src_tensor.shape[0],
+                                                          data_type="val",
+                                                          cmf_flag=True,
+                                                          other_flag=True)
         print(f"cmf:{cmf}, rmf:{rmf}, precision:{precision}, recall:{recall}")
-
-
 
     def forward(self, input_image):
         ourput_image = self.model(input_image)
