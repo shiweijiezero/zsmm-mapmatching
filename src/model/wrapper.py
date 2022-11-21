@@ -5,6 +5,7 @@ import torch
 import torch.nn.functional as F
 import torch.nn as nn
 import pytorch_lightning as pl
+import tqdm
 from cosine_annealing_warmup import CosineAnnealingWarmupRestarts
 from model import MyModel
 import matplotlib.pyplot as plt
@@ -47,6 +48,12 @@ class Wrapper(pl.LightningModule):
             loss = criteria(out, trg, reduction=reduction)
         return loss
 
+    def get_draw_mask(self,out):
+        draw_mask = torch.where(out < 0.1, torch.tensor(self.config["mask_value"][1]).half().to(self.device), out)
+        draw_mask = torch.where(out > 0.5, torch.tensor(self.config["mask_value"][3]).half().to(self.device), draw_mask)
+        draw_mask = torch.where((0.1 <= out) * (out <= 0.5), torch.tensor(self.config["mask_value"][2]).half().to(self.device), draw_mask)
+        return draw_mask
+
     # https://pytorch-lightning.readthedocs.io/en/stable/common/optimization.html
     def training_step(self, train_batch, batch_idx):
         input_image, target_image, mask = train_batch
@@ -58,19 +65,23 @@ class Wrapper(pl.LightningModule):
         elif (self.config["loss_type"] == "MSE"):
             criteria = self.weighted_mse_loss
 
-        loss = self.get_loss(output_image.view(-1, 224 * 224), target_image.view(-1, 224 * 224),
+        loss1 = self.get_loss(output_image.view(-1, 224 * 224), target_image.view(-1, 224 * 224),
                              criteria=criteria, mask=mask, reduction='mean', type=self.config["loss_type"])
-        cmf, _, _, _ = self.myutil.get_acc(config=self.config,
-                                           src_tensor=input_image[:, 1],
-                                           output_tensor=output_image[:, 0],
-                                           batch_idx=batch_idx,
-                                           batch_size=self.minibatch_size,
-                                           data_type="train",
-                                           cmf_flag=True,
-                                           other_flag=False)
+        draw_mask=self.get_draw_mask(output_image)
+        loss2 = self.get_loss(output_image.view(-1, 224 * 224), target_image.view(-1, 224 * 224),
+                             criteria=criteria, mask=draw_mask, reduction='mean', type=self.config["loss_type"])
+        loss = (loss1 + loss2)/2
+        # cmf, _, _, _ = self.myutil.get_acc(config=self.config,
+        #                                    src_tensor=input_image[:, 1].cpu(),
+        #                                    output_tensor=output_image[:, 0].cpu(),
+        #                                    batch_idx=batch_idx,
+        #                                    batch_size=self.minibatch_size,
+        #                                    data_type="train",
+        #                                    cmf_flag=True,
+        #                                    other_flag=False)
         self.log_dict({
             'train_loss': loss,
-            'train_cmf': cmf
+            # 'train_cmf': cmf
         }, prog_bar=True)
 
         return {"loss": loss}
@@ -86,20 +97,23 @@ class Wrapper(pl.LightningModule):
         elif (self.config["loss_type"] == "MSE"):
             criteria = self.weighted_mse_loss
 
-        loss = self.get_loss(output_image.view(-1, 224 * 224), target_image.view(-1, 224 * 224),
-                             criteria=criteria, mask=mask,
-                             reduction='mean')
-        cmf, _, _, _ = self.myutil.get_acc(config=self.config,
-                                           src_tensor=input_image[:, 1],
-                                           output_tensor=output_image[:, 0],
-                                           batch_idx=batch_idx,
-                                           batch_size=self.minibatch_size,
-                                           data_type="train",
-                                           cmf_flag=True,
-                                           other_flag=False)
+        loss1 = self.get_loss(output_image.view(-1, 224 * 224), target_image.view(-1, 224 * 224),
+                              criteria=criteria, mask=mask, reduction='mean', type=self.config["loss_type"])
+        draw_mask=self.get_draw_mask(output_image)
+        loss2 = self.get_loss(output_image.view(-1, 224 * 224), target_image.view(-1, 224 * 224),
+                              criteria=criteria, mask=draw_mask, reduction='mean', type=self.config["loss_type"])
+        loss = (loss1 + loss2)/2
+        # cmf, _, _, _ = self.myutil.get_acc(config=self.config,
+        #                                    src_tensor=input_image[:, 1].cpu(),
+        #                                    output_tensor=output_image[:, 0].cpu(),
+        #                                    batch_idx=batch_idx,
+        #                                    batch_size=self.minibatch_size,
+        #                                    data_type="train",
+        #                                    cmf_flag=True,
+        #                                    other_flag=False)
         self.log_dict({
             'val_loss': loss,
-            'val_cmf': cmf
+            # 'val_cmf': cmf
         }, prog_bar=True)
 
         if (batch_idx == 0):
@@ -150,6 +164,7 @@ class Wrapper(pl.LightningModule):
         src_tensor = torch.cat(src_lst, dim=0).cpu()
         output_tensor = torch.cat(output_lst, dim=0).cpu()
 
+
         if not os.path.exists("./data/save_output/"):
             os.mkdir("./data/save_output/")
         torch.save(src_tensor, f"./data/save_output/src_tensor")
@@ -164,7 +179,10 @@ class Wrapper(pl.LightningModule):
                                                           src_tensor.shape[0],
                                                           data_type="val",
                                                           cmf_flag=True,
-                                                          other_flag=True)
+                                                          other_flag=True,
+                                                          save_pic=False)
+        with open("./experiment result.txt","w") as f:
+            f.write(f"cmf:{cmf}, rmf:{rmf}, precision:{precision}, recall:{recall}")
         print(f"cmf:{cmf}, rmf:{rmf}, precision:{precision}, recall:{recall}")
 
     def forward(self, input_image):

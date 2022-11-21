@@ -1,3 +1,4 @@
+import os
 import pickle
 import time
 
@@ -160,12 +161,12 @@ class UtilClass():
         plt.close('all')
 
     def prepare_tensor(self, src_tensor, output_tensor):
-        cell_tensor = torch.where(src_tensor > 0.75, 1, 0)
-        road_tensor = torch.where(output_tensor > 0.75, 1, 0)
+        cell_tensor = torch.where(src_tensor > 0.7, 1, 0)
+        road_tensor = torch.where(output_tensor > 0.7, 1, 0)
         return cell_tensor, road_tensor
 
     def get_acc(self, config, src_tensor, output_tensor, batch_idx, batch_size, data_type="val",
-                cmf_flag=True, other_flag=False):
+                cmf_flag=True, other_flag=False, save_pic=False):
         cell_tensor, road_tensor = self.prepare_tensor(src_tensor, output_tensor)
         if (data_type == "train"):
             cell_src = self.train_src[batch_idx * batch_size:(batch_idx + 1) * batch_size]
@@ -181,6 +182,9 @@ class UtilClass():
         precision_count = 0
         recall_count = 0
 
+        if (save_pic == True):
+            [self.save_res_pic(src_tensor[idx],output_tensor[idx], road_tensor[idx], batch_idx*batch_size+idx)
+             for idx in tqdm.tqdm(range(len(cell_src)))]
         external_inputs = [(cell_src[i], cell_tensor[i], road_tensor[i], trg[i], other_flag) for i in
                            range(len(cell_src))]
         with torch.multiprocessing.get_context("spawn").Pool(processes=config["multiprocessing"]) as pool:
@@ -210,6 +214,31 @@ class UtilClass():
         else:
             rmf, precision, recall = 1e-5, 1e-5, 1e-5
         return cmf, rmf, precision, recall
+
+    def save_res_pic(self, input_image, output_image,output_image2, idx):
+        plt.figure(figsize=(4, 4))
+
+        plt.subplot(2, 2, 0 + 1)
+        plt.imshow(input_image.numpy())
+        plt.axis('off')
+
+        plt.subplot(2, 2, 1 + 1)
+        plt.imshow(output_image.numpy())
+        plt.axis('off')
+
+        plt.subplot(2, 2, 2 + 1)
+        plt.imshow(output_image2.numpy())
+        plt.axis('off')
+
+        if not os.path.exists("./data/save_picture"):
+            os.mkdir("./data/save_picture")
+
+        plt.savefig(
+            os.path.join("./data/save_picture",
+                         "I{:d}.png".format(idx)),
+            dpi=300)
+        plt.clf()
+        plt.close('all')
 
 
 # 将图像Tensor转为路网
