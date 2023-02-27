@@ -109,5 +109,5 @@ class OutConv(nn.Module):
     def forward(self, x):
         x=self.conv(x)
         # return self.bn(x)
-        x=F.sigmoid(x)
+        x=torch.sigmoid(x)
         return x

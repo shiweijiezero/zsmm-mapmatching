@@ -81,19 +81,21 @@ def transfer_pic(src, trg, mode, start, end):
 
         fig, ax = ox.plot_graph(G, show=False, close=False, node_size=0, edge_linewidth=1,
                                 figsize=(2.24,2.24),bgcolor="#000000",edge_color="#666666")  # 8*8 300dpi
-
         # 保存路网图
+        # fig, ax = ox.plot_figure_ground(G)
+        # plt.show()
+        # plt.close(fig)
         plt.savefig(f'../../data/pic_store/{mode}/ori/{start + traj_id}.png', format='png')
-
-        # 添加点，保存src
+        #
+        # # 添加点，保存src
         x_lst = [i[0] for i in cellpos_seq]
         y_lst = [i[1] for i in cellpos_seq]
         plt.scatter(x_lst, y_lst, c='#ffffff',s=1)  # optional para s=10
         plt.savefig(f'../../data/pic_store/{mode}/src/{start + traj_id}.png', format='png')
         plt.close(fig)
-
-        # construct target
-        # 添加边，保存trg
+        #
+        # # construct target
+        # # 添加边，保存trg
         fig2, ax2 = ox.plot_graph(G, show=False, close=False, node_size=0, edge_linewidth=1,
                                   figsize=(2.24,2.24),bgcolor="#000000",edge_color="#666666")  # 8*8 300dpi
         x_lst = [i[0] for i in targetpos_seq]

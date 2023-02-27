@@ -48,16 +48,20 @@ class Wrapper(pl.LightningModule):
             loss = criteria(out, trg, reduction=reduction)
         return loss
 
-    def get_draw_mask(self,out):
+    def get_draw_mask(self, out):
         draw_mask = torch.where(out < 0.1, torch.tensor(self.config["mask_value"][1]).half().to(self.device), out)
         draw_mask = torch.where(out > 0.5, torch.tensor(self.config["mask_value"][3]).half().to(self.device), draw_mask)
-        draw_mask = torch.where((0.1 <= out) * (out <= 0.5), torch.tensor(self.config["mask_value"][2]).half().to(self.device), draw_mask)
+        draw_mask = torch.where((0.1 <= out) * (out <= 0.5),
+                                torch.tensor(self.config["mask_value"][2]).half().to(self.device), draw_mask)
         return draw_mask
 
     # https://pytorch-lightning.readthedocs.io/en/stable/common/optimization.html
     def training_step(self, train_batch, batch_idx):
-        input_image, target_image, mask = train_batch
-        output_image = self.model(input_image)
+        input_image, target_image, mask, noise_input = train_batch
+        if (self.config["use_noise"]):
+            output_image = self.model(noise_input)
+        else:
+            output_image = self.model(input_image)
         if (self.config["loss_type"] == "BCE"):
             criteria = F.binary_cross_entropy_with_logits
         elif (self.config["loss_type"] == "L1"):
@@ -66,11 +70,11 @@ class Wrapper(pl.LightningModule):
             criteria = self.weighted_mse_loss
 
         loss1 = self.get_loss(output_image.view(-1, 224 * 224), target_image.view(-1, 224 * 224),
-                             criteria=criteria, mask=mask, reduction='mean', type=self.config["loss_type"])
-        draw_mask=self.get_draw_mask(output_image)
+                              criteria=criteria, mask=mask, reduction='mean', type=self.config["loss_type"])
+        draw_mask = self.get_draw_mask(output_image)
         loss2 = self.get_loss(output_image.view(-1, 224 * 224), target_image.view(-1, 224 * 224),
-                             criteria=criteria, mask=draw_mask, reduction='mean', type=self.config["loss_type"])
-        loss = (loss1 + loss2)/2
+                              criteria=criteria, mask=draw_mask, reduction='mean', type=self.config["loss_type"])
+        loss = (loss1 + loss2) / 2
         # cmf, _, _, _ = self.myutil.get_acc(config=self.config,
         #                                    src_tensor=input_image[:, 1].cpu(),
         #                                    output_tensor=output_image[:, 0].cpu(),
@@ -86,73 +90,84 @@ class Wrapper(pl.LightningModule):
 
         return {"loss": loss}
 
-    def validation_step(self, val_batch, batch_idx):
-        input_image, target_image, mask = val_batch
-        output_image = self.model(input_image)
-
-        if (self.config["loss_type"] == "BCE"):
-            criteria = F.binary_cross_entropy_with_logits
-        elif (self.config["loss_type"] == "L1"):
-            criteria = F.l1_loss
-        elif (self.config["loss_type"] == "MSE"):
-            criteria = self.weighted_mse_loss
-
-        loss1 = self.get_loss(output_image.view(-1, 224 * 224), target_image.view(-1, 224 * 224),
-                              criteria=criteria, mask=mask, reduction='mean', type=self.config["loss_type"])
-        draw_mask=self.get_draw_mask(output_image)
-        loss2 = self.get_loss(output_image.view(-1, 224 * 224), target_image.view(-1, 224 * 224),
-                              criteria=criteria, mask=draw_mask, reduction='mean', type=self.config["loss_type"])
-        loss = (loss1 + loss2)/2
-        # cmf, _, _, _ = self.myutil.get_acc(config=self.config,
-        #                                    src_tensor=input_image[:, 1].cpu(),
-        #                                    output_tensor=output_image[:, 0].cpu(),
-        #                                    batch_idx=batch_idx,
-        #                                    batch_size=self.minibatch_size,
-        #                                    data_type="train",
-        #                                    cmf_flag=True,
-        #                                    other_flag=False)
-        self.log_dict({
-            'val_loss': loss,
-            # 'val_cmf': cmf
-        }, prog_bar=True)
-
-        if (batch_idx == 0):
-            # save a example picture
-            plt.figure(figsize=(4, 4))
-
-            plt.subplot(2, 2, 0 + 1)
-            plt.imshow(input_image[0, 0].view(224, 224).cpu().data.numpy())
-            plt.axis('off')
-
-            plt.subplot(2, 2, 1 + 1)
-            plt.imshow(input_image[0, 1].view(224, 224).cpu().data.numpy())
-            plt.axis('off')
-
-            plt.subplot(2, 2, 2 + 1)
-            plt.imshow(target_image[0, 0].view(224, 224).cpu().data.numpy())
-            plt.axis('off')
-
-            plt.subplot(2, 2, 3 + 1)
-            plt.imshow(output_image[0, 0].view(224, 224).cpu().data.numpy())
-            plt.axis('off')
-
-            if not os.path.exists(os.path.join("../../data/train_visualized", str(self.ts))):
-                if not (os.path.exists(os.path.join("../../data/train_visualized"))):
-                    os.mkdir(os.path.join("../../data/train_visualized"))
-                os.mkdir(os.path.join("../../data/train_visualized", str(self.ts)))
-
-            plt.savefig(
-                os.path.join("../../data/train_visualized", str(self.ts),
-                             "I{:d}.png".format(self.counter)),
-                dpi=300)
-            plt.clf()
-            plt.close('all')
-            self.counter += 1
-
-        return {"loss": loss}
+    # def validation_step(self, val_batch, batch_idx):
+    #     input_image, target_image, mask, noise_input = val_batch
+    #     if (self.config["use_noise"]):
+    #         output_image = self.model(noise_input)
+    #     else:
+    #         output_image = self.model(input_image)
+    #
+    #     if (self.config["loss_type"] == "BCE"):
+    #         criteria = F.binary_cross_entropy_with_logits
+    #     elif (self.config["loss_type"] == "L1"):
+    #         criteria = F.l1_loss
+    #     elif (self.config["loss_type"] == "MSE"):
+    #         criteria = self.weighted_mse_loss
+    #
+    #     loss1 = self.get_loss(output_image.view(-1, 224 * 224), target_image.view(-1, 224 * 224),
+    #                           criteria=criteria, mask=mask, reduction='mean', type=self.config["loss_type"])
+    #     draw_mask = self.get_draw_mask(output_image)
+    #     loss2 = self.get_loss(output_image.view(-1, 224 * 224), target_image.view(-1, 224 * 224),
+    #                           criteria=criteria, mask=draw_mask, reduction='mean', type=self.config["loss_type"])
+    #     loss = (loss1 + loss2) / 2
+    #     # cmf, _, _, _ = self.myutil.get_acc(config=self.config,
+    #     #                                    src_tensor=input_image[:, 1].cpu(),
+    #     #                                    output_tensor=output_image[:, 0].cpu(),
+    #     #                                    batch_idx=batch_idx,
+    #     #                                    batch_size=self.minibatch_size,
+    #     #                                    data_type="train",
+    #     #                                    cmf_flag=True,
+    #     #                                    other_flag=False)
+    #     self.log_dict({
+    #         'val_loss': loss,
+    #         # 'val_cmf': cmf
+    #     }, prog_bar=True)
+    #
+    #     if (batch_idx == 0):
+    #         # save a example picture
+    #         plt.figure(figsize=(6, 4))
+    #
+    #         plt.subplot(3, 2, 0 + 1)
+    #         plt.imshow(input_image[0, 0].view(224, 224).cpu().data.numpy())
+    #         plt.axis('off')
+    #
+    #         plt.subplot(3, 2, 1 + 1)
+    #         plt.imshow(input_image[0, 1].view(224, 224).cpu().data.numpy())
+    #         plt.axis('off')
+    #
+    #         plt.subplot(3, 2, 2 + 1)
+    #         plt.imshow(noise_input[0, 0].view(224, 224).cpu().data.numpy())
+    #         plt.axis('off')
+    #
+    #         plt.subplot(3, 2, 3 + 1)
+    #         plt.imshow(noise_input[0, 1].view(224, 224).cpu().data.numpy())
+    #         plt.axis('off')
+    #
+    #         plt.subplot(3, 2, 4 + 1)
+    #         plt.imshow(target_image[0, 0].view(224, 224).cpu().data.numpy())
+    #         plt.axis('off')
+    #
+    #         plt.subplot(3, 2, 5 + 1)
+    #         plt.imshow(output_image[0, 0].view(224, 224).cpu().data.numpy())
+    #         plt.axis('off')
+    #
+    #         if not os.path.exists(os.path.join("../../data/train_visualized", str(self.ts))):
+    #             if not (os.path.exists(os.path.join("../../data/train_visualized"))):
+    #                 os.mkdir(os.path.join("../../data/train_visualized"))
+    #             os.mkdir(os.path.join("../../data/train_visualized", str(self.ts)))
+    #
+    #         plt.savefig(
+    #             os.path.join("../../data/train_visualized", str(self.ts),
+    #                          "I{:d}.png".format(self.counter)),
+    #             dpi=300)
+    #         plt.clf()
+    #         plt.close('all')
+    #         self.counter += 1
+    #
+    #     return {"loss": loss}
 
     def test_step(self, test_batch, batch_idx):
-        input_image, target_image, mask = test_batch
+        input_image, target_image, mask,noise_input = test_batch
         output_image = self.model(input_image)[:, 0]
         src_image = input_image[:, 1]
         return src_image, output_image
@@ -164,13 +179,12 @@ class Wrapper(pl.LightningModule):
         src_tensor = torch.cat(src_lst, dim=0).cpu()
         output_tensor = torch.cat(output_lst, dim=0).cpu()
 
-
         if not os.path.exists("./data/save_output/"):
             os.mkdir("./data/save_output/")
         torch.save(src_tensor, f"./data/save_output/src_tensor")
         torch.save(output_tensor, f"./data/save_output/output_tensor")
 
-        cmf, rmf, precision, recall = self.myutil.get_acc(config=self.config,
+        precision, recall = self.myutil.get_acc(config=self.config,
                                                           src_tensor=src_tensor,
                                                           output_tensor=output_tensor,
                                                           batch_idx=0,
@@ -178,12 +192,10 @@ class Wrapper(pl.LightningModule):
                                                           # 30,
                                                           src_tensor.shape[0],
                                                           data_type="val",
-                                                          cmf_flag=True,
-                                                          other_flag=True,
                                                           save_pic=False)
-        with open("./experiment result.txt","w") as f:
-            f.write(f"cmf:{cmf}, rmf:{rmf}, precision:{precision}, recall:{recall}")
-        print(f"cmf:{cmf}, rmf:{rmf}, precision:{precision}, recall:{recall}")
+        with open("./experiment result.txt", "w") as f:
+            f.write(f"precision:{precision}, recall:{recall}")
+        print(f"precision:{precision}, recall:{recall}")
 
     def forward(self, input_image):
         ourput_image = self.model(input_image)

@@ -1,3 +1,5 @@
+import os
+
 import yaml
 from argparse import ArgumentParser
 from pytorch_lightning import Trainer
@@ -11,6 +13,7 @@ def main():
     config_dir = 'config.yaml'
     with open(config_dir) as fin:
         config = yaml.safe_load(fin)
+    os.environ['CUDA_VISIBLE_DEVICES'] = config["CUDA_VISIBLE_DEVICES"]
 
     dataset = PLDataModule(batch_size=config["batch"])
     dataset.setup()
@@ -37,18 +40,25 @@ def main():
     )
 
     model = Wrapper(config, minibatch_size=config["batch"])
-    trainer = Trainer(precision=16,
-                      max_epochs=config["epoch"],
+    # trainer = Trainer(precision=16,
+    #                   max_epochs=config["epoch"],
+    #                   auto_scale_batch_size="power",
+    #                   logger=tb_logger,
+    #                   accelerator="gpu", devices=2, auto_select_gpus=True,
+    #                   strategy="ddp",
+    #                   callbacks=[checkpoint_callback,early_stopping]
+    #                   )
+    # # trainer.tune(model)
+    # trainer.fit(model, dataset)
+    # # trainer.fit(model, ckpt_path="some/path/to/my_checkpoint.ckpt")
+
+    trainer_test = Trainer(precision=16,
+                      max_epochs=1,
                       auto_scale_batch_size="power",
                       logger=tb_logger,
                       accelerator="gpu", devices=1, auto_select_gpus=True,
-                      strategy="ddp",
-                      callbacks=[checkpoint_callback,early_stopping]
                       )
-    # trainer.tune(model)
-    # trainer.fit(model, dataset)
-    # trainer.fit(model, ckpt_path="some/path/to/my_checkpoint.ckpt")
-    trainer.test(model=model,ckpt_path="./data/save_model/last.ckpt", dataloaders=dataset)
+    trainer_test.test(model=model,ckpt_path="./data/save_model/last.ckpt", dataloaders=dataset)
 
 
 if __name__ == '__main__':

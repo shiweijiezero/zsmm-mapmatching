@@ -1,3 +1,4 @@
+import random
 from random import randint, choice
 
 import argparse
@@ -32,8 +33,6 @@ class MyDataset(Dataset):
         self.image_transform = T.Compose([
             T.Grayscale(1),
             T.ToTensor(),
-            # T.Lambda(self.fix_img),
-            # T.Normalize((0.5), (0.5))
             T.Lambda(self.trans_img),
         ])
         # print(self.ori_images)
@@ -45,12 +44,34 @@ class MyDataset(Dataset):
     def fix_img(self, img):
         return 1 - img
 
+    def add_noise(self,img,cell_noise=False):
+        noise_img=img.clone()
+        # 噪声基站，在图片中选择一些位置设为噪声
+        if(cell_noise==True):
+            noise_x=torch.randint(low=0,high=223,size=(self.config["noise_number"],))
+            noise_y=torch.randint(low=0,high=223,size=(self.config["noise_number"],))
+            for i in range(self.config["noise_number"]):
+                for x in range(-1,2):
+                    for y in range(-1,2):
+                        if(0<=noise_x[i]+x<=223 and 0<=noise_y[i]+y<=223):
+                            noise_img[0,noise_x[i],noise_y[i]]=torch.tensor(1.0)
+
+        # 图片整体噪声
+        for i in range(img.shape[1]):
+            for j in range(img.shape[2]):
+                rdn=random.random()
+                if rdn < self.config["noise_threshold"]:
+                    noise_img[0,i,j] = random.random()
+
+        return noise_img
+
+
     def trans_img(self, img):
         # print(img.dtype)
         # 可以用0.5做分界线
         mask = torch.where(img < 0.1, torch.tensor(self.config["mask_value"][1]), img)
         mask = torch.where(img > 0.5, torch.tensor(self.config["mask_value"][3]), mask)
-        mask = torch.where((0.1 <= img) * (img <= 0.75), torch.tensor(self.config["mask_value"][2]), mask)
+        mask = torch.where((0.1 <= img) * (img <= 0.5), torch.tensor(self.config["mask_value"][2]), mask)
 
         middle_pos = torch.argwhere(mask == self.config["mask_value"][1])  # 取边界下标
         top, left, down, right = middle_pos[0][1], middle_pos[0][2], \
@@ -82,7 +103,9 @@ class MyDataset(Dataset):
         src_image = PIL.Image.open(self.src_images[key])
         trg_image = PIL.Image.open(self.trg_images[key])
         ori_image_tensor, _ = self.image_transform(ori_image)  # C*H*W
+        ori_image_noise_tensor = self.add_noise(ori_image_tensor)
         src_image_tensor, _ = self.image_transform(src_image)  # C*H*W
+        src_image_noise_tensor = self.add_noise(src_image_tensor,cell_noise=True)
         trg_image_tensor, mask = self.image_transform(trg_image)  # C*H*W
 
         # visualize
@@ -98,15 +121,16 @@ class MyDataset(Dataset):
         # plt.close('all')
 
         input_image_tensor = torch.cat([ori_image_tensor, src_image_tensor], dim=0)  # (2*C)*H*W
+        noise_input_tensor = torch.cat([ori_image_noise_tensor, src_image_noise_tensor], dim=0)  # (2*C)*H*W
 
-        return input_image_tensor, trg_image_tensor, mask
+        return input_image_tensor, trg_image_tensor, mask,noise_input_tensor
 
 
 class PLDataModule(LightningDataModule):
     def __init__(self,
                  batch_size: int = 128,
                  num_workers=8,
-                 shuffle=False,
+                 shuffle=True,
                  pin_memory=True
                  ):
         """
@@ -132,7 +156,7 @@ class PLDataModule(LightningDataModule):
                           pin_memory=self.pin_memory)
 
     def val_dataloader(self):
-        return DataLoader(self.valid_dataset, batch_size=self.batch_size, shuffle=False,
+        return DataLoader(self.valid_dataset, batch_size=self.batch_size, shuffle=self.shuffle,
                           num_workers=self.num_workers,
                           drop_last=False, collate_fn=self.dl_collate_fn,
                           pin_memory=self.pin_memory)
@@ -146,4 +170,5 @@ class PLDataModule(LightningDataModule):
     def dl_collate_fn(self, batch):
         return torch.stack([row[0] for row in batch], dim=0), \
                torch.stack([row[1] for row in batch], dim=0), \
-               torch.stack([row[2] for row in batch], dim=0)
+               torch.stack([row[2] for row in batch], dim=0), \
+               torch.stack([row[3] for row in batch], dim=0), \

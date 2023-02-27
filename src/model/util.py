@@ -57,9 +57,11 @@ class UtilClass():
         trg_idx = torch.argwhere(trg_cur == 1)
         for i in range(trg_idx.shape[0]):
             height_loc, width_loc = trg_idx[i][0], trg_idx[i][1]
-            cur_cell_lat = top_cell - (height_loc - top_pic) * height_pix2coordinate
-            cur_cell_lon = left_cell + (width_loc - left_pic) * width_pix2coordinate
-            res_pos.append((cur_cell_lon.item(), cur_cell_lat.item()))
+            # 进行下采样避免后续需要计算的着色点过多
+            # if(height_loc%2==0 and width_loc%2==0):
+            cur_road_lat = (top_cell - (height_loc - top_pic) * height_pix2coordinate).item()
+            cur_road_lon = (left_cell + (width_loc - left_pic) * width_pix2coordinate).item()
+            res_pos.append((cur_road_lon, cur_road_lat))
 
         res_pos = list(set(res_pos))
         return res_pos
@@ -105,31 +107,24 @@ class UtilClass():
         correct_nodes = res_nodes.intersection(trg_nodes)
         return len(correct_nodes) / len(trg_nodes)
 
-    def get_matched_node_from_pos(self, cell_seq, res_pos):
-        cellpos_seq = [(self.cellID2pos[i][0], self.cellID2pos[i][1]) for i in cell_seq]
-        corridor = LineString(cellpos_seq).buffer(0.015)
-        cf = '["highway"~"motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link"]'  # tertiary|tertiary_link
-        G = ox.graph_from_polygon(corridor,
-                                  custom_filter=cf,
-                                  retain_all=False)
-        nearest_edge_lst = set(
-            [ox.nearest_edges(G, X=pos[0], Y=pos[1], interpolate=20, return_dist=False) for pos in res_pos])
+    def get_matched_node_from_pos(self, G, res_pos):
+        X = [item[0] for item in res_pos]
+        Y = [item[1] for item in res_pos]
+        nearest_edge_lst = set(ox.nearest_edges(G, X=X, Y=Y, return_dist=False))
+
         nodes1 = set([node1 for node1, node2, flag in nearest_edge_lst])
         nodes2 = set([node2 for node1, node2, flag in nearest_edge_lst])
         nodes = nodes1.union(nodes2)
         return nodes
 
-    def get_nodes_from_trg(self, cell_seq, trg):
+    def get_nodes_from_trg(self, G, trg):
         targetpos_seq = [self.roadID2pos[i][0] for i in trg]
         targetpos_seq.append(self.roadID2pos[trg[-1]][1])
-        cellpos_seq = [(self.cellID2pos[i][0], self.cellID2pos[i][1]) for i in cell_seq]
-        corridor = LineString(cellpos_seq).buffer(0.015)
-        cf = '["highway"~"motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link"]'  # tertiary|tertiary_link
-        G = ox.graph_from_polygon(corridor,
-                                  custom_filter=cf,
-                                  retain_all=False)
-        nearest_edge_lst = set(
-            [ox.nearest_edges(G, X=pos[0], Y=pos[1], interpolate=20, return_dist=False) for pos in targetpos_seq])
+
+        X = [item[0] for item in targetpos_seq]
+        Y = [item[1] for item in targetpos_seq]
+        nearest_edge_lst = set(ox.nearest_edges(G, X=X, Y=Y, return_dist=False))
+
         nodes1 = set([node1 for node1, node2, flag in nearest_edge_lst])
         nodes2 = set([node2 for node1, node2, flag in nearest_edge_lst])
         nodes = nodes1.union(nodes2)
@@ -165,9 +160,11 @@ class UtilClass():
         road_tensor = torch.where(output_tensor > 0.7, 1, 0)
         return cell_tensor, road_tensor
 
-    def get_acc(self, config, src_tensor, output_tensor, batch_idx, batch_size, data_type="val",
-                cmf_flag=True, other_flag=False, save_pic=False):
+    def get_acc(self, config, src_tensor, output_tensor, batch_idx, batch_size, data_type="val", save_pic=False):
+        # 基站Figure，匹配路径Figure
         cell_tensor, road_tensor = self.prepare_tensor(src_tensor, output_tensor)
+
+        # 获得基站位置序列，ground truth道路序列
         if (data_type == "train"):
             cell_src = self.train_src[batch_idx * batch_size:(batch_idx + 1) * batch_size]
             trg = self.train_trg[batch_idx * batch_size:(batch_idx + 1) * batch_size]
@@ -177,45 +174,76 @@ class UtilClass():
         else:
             raise RuntimeError('prepare_acc ERROR! data type is not valid!')
 
-        cmf_count = 0
-        rmf_count = 0
-        precision_count = 0
-        recall_count = 0
-
+        # 保存可视化图片
         if (save_pic == True):
-            [self.save_res_pic(src_tensor[idx],output_tensor[idx], road_tensor[idx], batch_idx*batch_size+idx)
+            [self.save_res_pic(src_tensor[idx], output_tensor[idx], road_tensor[idx], batch_idx * batch_size + idx)
              for idx in tqdm.tqdm(range(len(cell_src)))]
-        external_inputs = [(cell_src[i], cell_tensor[i], road_tensor[i], trg[i], other_flag) for i in
+
+        # 为下一次输入准备
+        # 基站位置序列，基站Figure，匹配道路Figure，ground-truth道路序列，是否计算
+        external_inputs = [(i,cell_src[i], cell_tensor[i], road_tensor[i], trg[i]) for i in
                            range(len(cell_src))]
-        with torch.multiprocessing.get_context("spawn").Pool(processes=config["multiprocessing"]) as pool:
-            # print("Get start evaluation!")
-            acc_lst = pool.map(self.pool_func, external_inputs)
+
+        # 路网层面进行匹配，并计算出精度
+        # -------------------------
+        # 并发计算
+        # with torch.multiprocessing.get_context("spawn").Pool(processes=config["multiprocessing"]) as pool:
+        #     # print("Get start evaluation!")
+        #     acc_lst = pool.map(self.pool_func, external_inputs)
+        # -------------------------
+        # 循环计算
+        acc_lst = [self.pool_func(external_inputs[i]) for i in tqdm.tqdm(range(len(external_inputs)))]
+
+        precision_sum = 0
+        recall_sum = 0
         for item in acc_lst:
-            cmf_count += item[0]
-            rmf_count += item[1]
-            precision_count += item[2]
-            recall_count += item[3]
-        return cmf_count / len(cell_src), \
-               rmf_count / len(cell_src), \
-               precision_count / len(cell_src), \
-               recall_count / len(cell_src),
+            precision_sum += item[0]
+            recall_sum += item[1]
+        return precision_sum / len(cell_src), \
+               recall_sum / len(cell_src),
 
     def pool_func(self, external_input):
-        cell_src_i, cell_tensor_i, road_tensor_i, trg_i, other_flag = external_input
-        res_pos = self.convert_pix2coordinate(cell_src_i, cell_tensor_i, road_tensor_i)
-        cmf = self.get_cmf(res_pos, trg_i, radius=50)
-
-        if (other_flag):
-            res_nodes = self.get_matched_node_from_pos(cell_src_i, res_pos)
-            trg_nodes = self.get_nodes_from_trg(cell_src_i, trg_i)
-            rmf = self.get_rmf(res_nodes, trg_nodes)
-            precision = self.get_precision(res_nodes, trg_nodes)
-            recall = self.get_recall(res_nodes, trg_nodes)
+        # 基站位置序列，基站Figure，匹配道路Figure，ground-truth道路序列，是否计算
+        i,cell_src_i, cell_tensor_i, road_tensor_i, trg_i = external_input
+        # 将匹配结果的pixel转换为对应的经纬坐标，输入cell是为了定位比例尺
+        start_time=time.time()
+        res_road_pos = self.convert_pix2coordinate(cell_src_i, cell_tensor_i, road_tensor_i)
+        # print(f"1-{time.time()-start_time}")
+        start_time = time.time()
+        # 得到对应的路网图G
+        if(os.path.exists(f"./data/save_graphml/graph_{i}.gpkg")):
+            G=ox.load_graphml(f"./data/save_graphml/graph_{i}.gpkg")
         else:
-            rmf, precision, recall = 1e-5, 1e-5, 1e-5
-        return cmf, rmf, precision, recall
+            cellpos_seq = [(self.cellID2pos[i][0], self.cellID2pos[i][1]) for i in cell_src_i]
+            corridor = LineString(cellpos_seq).buffer(0.015)
 
-    def save_res_pic(self, input_image, output_image,output_image2, idx):
+            cf = '["highway"~"motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link"]'  # tertiary|tertiary_link
+            # G = ox.graph_from_polygon(corridor,
+            #                           custom_filter=cf,
+            #                           retain_all=False)
+            G = ox.graph_from_polygon(corridor,
+                                      network_type="drive",
+                                      retain_all=False)
+            ox.save_graphml(G,filepath=f"./data/save_graphml/graph_{i}.gpkg")
+        # print(f"2-{time.time() - start_time}")
+        # start_time = time.time()
+
+        res_nodes = self.get_matched_node_from_pos(G, res_road_pos)
+        # print(f"3-{time.time() - start_time}")
+        # start_time = time.time()
+        trg_nodes = self.get_nodes_from_trg(G, trg_i)
+        # print(f"4-{time.time() - start_time}")
+        # start_time = time.time()
+
+        precision = self.get_precision(res_nodes, trg_nodes)
+        recall = self.get_recall(res_nodes, trg_nodes)
+        # print(f"5-{time.time() - start_time}")
+        # cmf = self.get_cmf(res_road_pos, trg_i, radius=50)
+        # rmf = self.get_rmf(res_nodes, trg_nodes)
+
+        return precision, recall
+
+    def save_res_pic(self, input_image, output_image, output_image2, idx):
         plt.figure(figsize=(4, 4))
 
         plt.subplot(2, 2, 0 + 1)
