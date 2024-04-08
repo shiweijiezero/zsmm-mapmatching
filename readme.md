@@ -48,7 +48,7 @@ We provide some figures and experiment results to illustrate the matching of ZSM
 
 ## 4. Dataset
 
-We provide synthetic data in director `data`.
+We provide synthetic data in (https://huggingface.co/datasets/weijiezz/map-matching-dataset/tree/main).
 For the real trajectory data, unfortunately, due to privacy protection, we cannot provide the dataset for testing.
 
 ---
