@@ -40,24 +40,20 @@ $ cd src/model
 $ python main.py
 ```
 
-## 3. Map-matching-Example
-
-We provide some figures and experiment results to illustrate the matching of ZSMM in director `src/model`.
-
 ---
 
-## 4. Dataset
+## 3. Dataset
 
 We provide synthetic data in (https://huggingface.co/datasets/weijiezz/map-matching-dataset/tree/main).
 For the real trajectory data, unfortunately, due to privacy protection, we cannot provide the dataset for testing.
 
 ---
 
-## 5. License
+## 4. License
 
 The code is developed under the MPL-02.0 license.
 
 ---
 
-## 6. Contact
-If you have any questions or require further clarification, please do not hesitate to send an email to us (E-mail address：shiweijie0311@foxmail.com)
+## 5. Contact
+Due to Anonymous Policy, we could not provide any contact information.
