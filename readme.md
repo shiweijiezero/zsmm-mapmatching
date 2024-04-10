@@ -6,10 +6,9 @@ This is an implementation for paper <u>Zero-Shot Cellular Trajectory Map Matchin
 
 1. [Requirements](#requirements)
 2. [Execution](#execution)
-3. [Map-matching-Example](#Map-matching-Example)
-4. [Dataset](#Dataset)
-5. [License](#license)
-6. [Contact](#contact)
+3. [Dataset](#Dataset)
+4. [License](#license)
+5. [Contact](#contact)
 
 ---
 
